@@ -1,0 +1,29 @@
+# An internal API that only the worker inside the network can call.
+# AWS: Lambda behind an internal load balancer. GCP: Cloud Run with internal ingress.
+name: papi
+sshKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPY1joKA/RkxSPtgiFiz2GrPhChFLloacPEEZLM9jM+m paibot-iac-example"
+targets:
+  - { cloud: aws, region: ap-northeast-1 }
+  - { cloud: gcp, region: asia-northeast1, project: my-project }
+
+networks:
+  - name: main
+    cidr: 10.30.0.0/16
+    subnets:
+      - { name: app-a, cidr: 10.30.1.0/24 }
+      - { name: app-b, cidr: 10.30.2.0/24 }
+
+instances:
+  - name: worker
+    size: small
+    subnet: main/app-a
+
+functions:
+  - name: api
+    source: api
+    runtime: node22
+    command: [node, server.js]
+    access: private
+    subnet: main/app-a
+    memoryMb: 1024
+    timeoutSeconds: 60

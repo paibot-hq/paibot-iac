@@ -1,0 +1,14 @@
+# One plain Node HTTP server, published on all three clouds.
+name: fn-demo
+targets:
+  - { cloud: aws, region: ap-northeast-1 }
+  - { cloud: gcp, region: asia-northeast1, project: my-project }
+  - { cloud: azure, region: japaneast }
+
+functions:
+  - name: hello
+    source: hello
+    runtime: node22
+    command: [node, server.js]
+    access: public
+    env: { GREETING: "paibot" }

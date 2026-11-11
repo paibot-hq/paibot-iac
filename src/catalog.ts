@@ -80,3 +80,27 @@ export function image(name: string): Image | undefined {
 
 /** The login user on every common image. */
 export const ADMIN_USER = "ubuntu";
+
+export interface RuntimeInfo {
+  name: string;
+  /** AWS Lambda managed runtime that provides the interpreter. */
+  aws: string;
+  /** Cloud Run base image path under `<region>-docker.pkg.dev/serverless-runtimes/`. */
+  gcp: string;
+}
+
+export const RUNTIMES: RuntimeInfo[] = [
+  { name: "node22", aws: "nodejs22.x", gcp: "google-22-full/runtimes/nodejs22" },
+  { name: "node24", aws: "nodejs24.x", gcp: "google-24-full/runtimes/nodejs24" },
+  { name: "python3.12", aws: "python3.12", gcp: "google-22-full/runtimes/python312" },
+];
+
+export function runtime(name: string): RuntimeInfo | undefined {
+  return RUNTIMES.find((r) => r.name === name);
+}
+
+/** AWS Lambda Web Adapter layer (awslabs/aws-lambda-web-adapter), x86_64. */
+export const LWA_LAYER = (region: string) => `arn:aws:lambda:${region}:753240598075:layer:LambdaAdapterLayerX86:30`;
+
+/** Port the app listens on where the platform does not choose one. */
+export const FUNCTION_PORT = "8080";

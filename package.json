@@ -1,6 +1,6 @@
 {
   "name": "@paibot/iac",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Write infrastructure once — networks, NAT, VMs, firewalls, buckets — and generate Terraform / OpenTofu for AWS, Google Cloud and Azure with the same meaning on each.",
   "type": "module",
   "license": "MIT",

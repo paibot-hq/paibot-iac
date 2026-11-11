@@ -159,3 +159,60 @@ test("extra is merged into its own cloud only", () => {
   assert.ok(o.aws.resource.aws_s3_bucket["_9-data"], "merging keeps generated resources");
   assert.equal(o.gcp.resource.aws_s3_bucket, undefined);
 });
+
+function withFn(access: "public" | "iam" | "private", subnet?: string, clouds: string[] = ["aws", "gcp"]): Infra {
+  const infra = base();
+  infra.targets = infra.targets.filter((t) => clouds.includes(t.cloud));
+  infra.networks![0].subnets.push({ name: "app2", cidr: "10.0.2.0/24" });
+  infra.functions = [
+    { name: "api", source: "src", runtime: "node22", command: ["node", "server.js"], access, subnet, env: { A: "${x}" } },
+  ];
+  return infra;
+}
+
+test("functions: public on every cloud", () => {
+  const o = byCloud(withFn("public", undefined, ["aws", "gcp", "azure"]));
+  assert.equal(o.aws.resource.aws_lambda_function_url.api.authorization_type, "NONE");
+  assert.equal(o.aws.resource.aws_lambda_permission.fn_api_invoke.invoked_via_function_url, true);
+  assert.equal(o.gcp.resource.google_cloud_run_v2_service.api.ingress, "INGRESS_TRAFFIC_ALL");
+  assert.equal(o.gcp.resource.google_cloud_run_v2_service.api.invoker_iam_disabled, true);
+  assert.equal(o.azure.resource.azurerm_function_app_flex_consumption.api.runtime_name, "custom");
+  for (const c of ["aws", "gcp", "azure"]) assert.ok(o[c].output.api_url, `${c} outputs the url`);
+});
+
+test("functions: iam keeps the URL but checks the caller", () => {
+  const o = byCloud(withFn("iam"));
+  assert.equal(o.aws.resource.aws_lambda_function_url.api.authorization_type, "AWS_IAM");
+  assert.equal(o.aws.resource.aws_lambda_permission, undefined);
+  assert.equal(o.gcp.resource.google_cloud_run_v2_service.api.invoker_iam_disabled, false);
+});
+
+test("functions: private has no internet-facing entry", () => {
+  const o = byCloud(withFn("private", "main/app"));
+  assert.equal(o.aws.resource.aws_lambda_function_url, undefined);
+  assert.equal(o.aws.resource.aws_lb.fn_api.internal, true);
+  assert.deepEqual(o.aws.resource.aws_lb.fn_api.subnets, ["${aws_subnet.main_app.id}", "${aws_subnet.main_app2.id}"]);
+  assert.equal(o.aws.resource.aws_vpc_security_group_ingress_rule.fn_api_lb_in.cidr_ipv4, "10.0.0.0/16");
+  assert.equal(o.aws.resource.aws_lb_target_group.fn_api.target_type, "lambda");
+  assert.equal(o.gcp.resource.google_cloud_run_v2_service.api.ingress, "INGRESS_TRAFFIC_INTERNAL_ONLY");
+});
+
+test("functions: a subnet puts outbound traffic through the network", () => {
+  const o = byCloud(withFn("iam", "main/app"));
+  assert.deepEqual(o.aws.resource.aws_lambda_function.api.vpc_config.subnet_ids, ["${aws_subnet.main_app.id}"]);
+  assert.equal(o.gcp.resource.google_cloud_run_v2_service.api.template[0].vpc_access[0].egress, "ALL_TRAFFIC");
+});
+
+test("functions: Web Adapter wiring and packages", () => {
+  const [aws] = generate(withFn("public"), "aws");
+  const fn = (aws.json as J).resource.aws_lambda_function.api;
+  assert.equal(fn.handler, "paibot-run.sh");
+  assert.match(fn.layers[0], /:layer:LambdaAdapterLayerX86:\d+$/);
+  assert.equal(fn.environment.variables.AWS_LAMBDA_EXEC_WRAPPER, "/opt/bootstrap");
+  assert.equal(fn.environment.variables.A, "$${x}", "env values are escaped");
+  assert.deepEqual(
+    aws.packages.map((p) => [p.dir, p.files.map((f) => f.path)]),
+    [["build/api", ["paibot-run.sh"]]],
+  );
+  assert.match(aws.packages[0].files[0].content, /exec node server\.js\n$/);
+});

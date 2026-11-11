@@ -1,4 +1,4 @@
-import { image, machineType, IMAGES, SIZES } from "./catalog.ts";
+import { image, machineType, IMAGES, RUNTIMES, SIZES } from "./catalog.ts";
 import { CLOUDS, type Cloud, type Infra, type Instance, type Network, type Subnet } from "./types.ts";
 
 export class InfraError extends Error {
@@ -21,7 +21,7 @@ export function validate(input: unknown): Infra {
   const err = (msg: string) => p.push(msg);
 
   if (!isObj(input)) throw new InfraError(["the definition must be an object"]);
-  keys(input, "definition", ["name", "targets", "sshKey", "networks", "instances", "buckets", "extra"], err);
+  keys(input, "definition", ["name", "targets", "sshKey", "networks", "instances", "buckets", "functions", "extra"], err);
   str(input.name, "name", err) && checkName("name", input.name as string, err);
 
   const targets = arr(input.targets, "targets", err);
@@ -168,6 +168,85 @@ export function validate(input: unknown): Infra {
   });
   if (clouds.has("azure") && instances.length > 0 && !input.sshKey) {
     err("azure VMs need `sshKey` (password login is never generated)");
+  }
+
+  // functions
+  const functions = (input.functions === undefined ? [] : arr(input.functions, "functions", err)) ?? [];
+  const fnNames = new Set<string>();
+  functions.forEach((f, i) => {
+    const at = `functions[${i}]`;
+    if (!isObj(f)) return err(`${at} must be an object`);
+    keys(f, at, ["name", "source", "runtime", "command", "memoryMb", "timeoutSeconds", "env", "access", "subnet"], err);
+    if (!str(f.name, `${at}.name`, err)) return;
+    const name = f.name as string;
+    const ft = `function ${name}`;
+    checkName(ft, name, err);
+    if (fnNames.has(name)) err(`function \`${name}\` is defined twice`);
+    fnNames.add(name);
+    str(f.source, `${ft}.source`, err);
+    if (!RUNTIMES.some((r) => r.name === f.runtime)) err(`${ft}.runtime must be one of ${RUNTIMES.map((r) => r.name).join(", ")}`);
+    const cmd = arr(f.command, `${ft}.command`, err);
+    if (cmd && (cmd.length === 0 || cmd.some((c) => typeof c !== "string" || c === ""))) {
+      err(`${ft}.command must be a non-empty list of strings, e.g. ["node", "server.js"]`);
+    }
+    if (f.memoryMb !== undefined && (!Number.isInteger(f.memoryMb) || (f.memoryMb as number) < 512 || (f.memoryMb as number) > 4096)) {
+      err(`${ft}.memoryMb must be a whole number from 512 to 4096`);
+    }
+    if (
+      f.timeoutSeconds !== undefined &&
+      (!Number.isInteger(f.timeoutSeconds) || (f.timeoutSeconds as number) < 1 || (f.timeoutSeconds as number) > 900)
+    ) {
+      err(`${ft}.timeoutSeconds must be a whole number from 1 to 900`);
+    }
+    if (f.env !== undefined) {
+      if (!isObj(f.env)) err(`${ft}.env must be a map of strings`);
+      else
+        for (const [k, v] of Object.entries(f.env)) {
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) err(`${ft}.env: \`${k}\` is not a valid variable name`);
+          if (k === "PORT" || k.startsWith("AWS_") || k.startsWith("FUNCTIONS_")) err(`${ft}.env: \`${k}\` is set by the platform`);
+          if (typeof v !== "string") err(`${ft}.env.${k} must be a string`);
+        }
+    }
+    const access = (f.access as string | undefined) ?? "iam";
+    if (!["public", "iam", "private"].includes(access)) err(`${ft}.access must be public, iam or private`);
+    optStr(f.subnet, `${ft}.subnet`, err);
+    if (typeof f.subnet === "string") {
+      if (!locate(netByName, f.subnet)) err(`${ft}: subnet \`${f.subnet}\` not found (write it as network/subnet)`);
+    } else if (access === "private") {
+      err(`${ft}: \`access: private\` needs \`subnet\` (the network it can be called from)`);
+    }
+
+    if (clouds.has("aws") && access === "private" && typeof f.subnet === "string") {
+      const net = netByName.get(f.subnet.split("/")[0]);
+      const sub = locate(netByName, f.subnet);
+      const same = net?.subnets?.filter((s) => isObj(s) && !!s.public === !!sub?.public) ?? [];
+      if (sub && same.length < 2) {
+        err(
+          `${ft}: on aws a private function sits behind an internal load balancer, which needs two ` +
+            `${sub.public ? "public" : "private"} subnets in \`${f.subnet.split("/")[0]}\``,
+        );
+      }
+      if (typeof input.name === "string" && `${input.name}-${name}`.length > 32) {
+        err(`${ft}: on aws the load balancer name \`${input.name}-${name}\` must be 32 characters or fewer`);
+      }
+    }
+    if (clouds.has("azure")) {
+      if (access !== "public") {
+        err(`${ft}: \`access: ${access}\` is not supported on azure yet (only public)`);
+      }
+      if (typeof f.subnet === "string") {
+        const used = instances.find((x) => isObj(x) && x.subnet === f.subnet);
+        if (used) {
+          err(`${ft}: on azure a function's subnet is reserved for functions, but instance ${(used as Obj).name} is also in ${f.subnet}`);
+        }
+      }
+    }
+  });
+  if (clouds.has("gcp") && functions.length && typeof input.name === "string") {
+    for (const t of (targets ?? []).filter((t) => isObj(t) && t.cloud === "gcp") as Obj[]) {
+      const bucket = `${t.project}-${input.name}-src`;
+      if (bucket.length > 63) err(`on gcp the function source bucket \`${bucket}\` would be longer than 63 characters`);
+    }
   }
 
   // buckets

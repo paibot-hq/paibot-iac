@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -59,6 +59,7 @@ export function resolveFiles(infra: Infra, baseDir: string): Infra {
       throw new Error(`${what}: cannot read ${full}`);
     }
   };
+  const full = (p: string) => (p.startsWith("~/") ? join(homedir(), p.slice(2)) : isAbsolute(p) ? p : join(baseDir, p));
   let sshKey = infra.sshKey?.trim();
   if (sshKey && !/^(ssh-|ecdsa-|sk-)/.test(sshKey)) sshKey = read(sshKey, "sshKey").trim();
   return {
@@ -68,6 +69,13 @@ export function resolveFiles(infra: Infra, baseDir: string): Infra {
       if (i.userDataFile === undefined) return i;
       const { userDataFile, ...rest } = i;
       return { ...rest, userData: read(userDataFile, `instance ${i.name}.userDataFile`) };
+    }),
+    functions: infra.functions?.map((f) => {
+      const source = full(f.source);
+      if (!existsSync(source) || !statSync(source).isDirectory()) {
+        throw new Error(`function ${f.name}.source: ${source} is not a folder`);
+      }
+      return { ...f, source };
     }),
   };
 }

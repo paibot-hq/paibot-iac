@@ -1,11 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { SIZES, IMAGES } from "./catalog.ts";
 import { generate, targetName } from "./generate.ts";
 import { findDefinition, loadInfra } from "./load.ts";
 import { InfraError } from "./validate.ts";
+import { writeOutputs } from "./write.ts";
 
 const HELP = `paibot-iac — write infrastructure once, generate Terraform / OpenTofu for AWS, Google Cloud and Azure
 
@@ -56,7 +57,7 @@ async function main(argv: string[]): Promise<number> {
     }
     case "gen": {
       const file = rest[0] ?? findDefinition();
-      for (const dir of write(await loadInfra(file), values.out!, values.target)) console.log(`wrote ${dir}`);
+      for (const dir of write(await loadInfra(file), values.out!, values.target)) console.log(`wrote ${dir}/main.tf.json`);
       return 0;
     }
     case "plan":
@@ -77,12 +78,7 @@ async function main(argv: string[]): Promise<number> {
 }
 
 function write(infra: Awaited<ReturnType<typeof loadInfra>>, out: string, only?: string): string[] {
-  return generate(infra, only).map((o) => {
-    const dir = join(out, o.target);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "main.tf.json"), JSON.stringify(o.json, null, 2) + "\n");
-    return join(dir, "main.tf.json").replace(/main\.tf\.json$/, "");
-  });
+  return writeOutputs(generate(infra, only), out);
 }
 
 function pickEngine(): string {

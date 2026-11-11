@@ -1,7 +1,7 @@
 import { aws } from "./clouds/aws.ts";
 import { azure } from "./clouds/azure.ts";
 import { gcp } from "./clouds/gcp.ts";
-import type { Ctx } from "./clouds/common.ts";
+import type { Ctx, Package } from "./clouds/common.ts";
 import type { TfDoc } from "./tf.ts";
 import type { Cloud, Infra, Target } from "./types.ts";
 import { validate } from "./validate.ts";
@@ -14,6 +14,8 @@ export interface Output {
   cloud: Cloud;
   /** Contents of `main.tf.json`. */
   json: unknown;
+  /** Function folders to copy next to `main.tf.json` (see `writeOutputs`). */
+  packages: Package[];
 }
 
 export function targetName(t: Target): string {
@@ -31,9 +33,10 @@ export function generate(infra: Infra, only?: string): Output[] {
     throw new Error(`no target named \`${only}\` (have: ${infra.targets.map(targetName).join(", ")})`);
   }
   return targets.map((target) => {
-    const doc = BACKENDS[target.cloud]({ infra, target });
+    const packages: Package[] = [];
+    const doc = BACKENDS[target.cloud]({ infra, target, packages });
     const extra = infra.extra?.[target.cloud];
     if (extra) doc.merge(extra);
-    return { target: targetName(target), cloud: target.cloud, json: doc.toJSON() };
+    return { target: targetName(target), cloud: target.cloud, json: doc.toJSON(), packages };
   });
 }

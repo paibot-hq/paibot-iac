@@ -65,6 +65,38 @@ So on every cloud:
 
 Definitions that only some clouds could honour are rejected — for example a public IP in a private subnet, or a NAT with no public subnet to sit in. `paibot-iac check` lists every problem at once.
 
+## Functions (Lambda-style)
+
+Run a **plain HTTP server** that listens on `$PORT` as a serverless function on all three clouds. No Lambda- or Cloud Run-specific code.
+
+```yaml
+functions:
+  - name: hello
+    source: hello               # zipped as it is — include node_modules / vendored packages
+    runtime: node22             # node22 / node24 / python3.12
+    command: [node, server.js]
+    access: public              # public / iam / private (default iam)
+    memoryMb: 512               # 512–4096
+    timeoutSeconds: 30          # 1–900
+    env: { GREETING: paibot }
+    subnet: main/app            # outbound traffic follows this subnet's rules; required for private
+```
+
+| | AWS | Google Cloud | Azure (experimental) |
+|---|---|---|---|
+| runs on | Lambda + [Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter) | Cloud Run, zip on a runtime base image (no build) | Functions Flex Consumption, custom handler |
+| `public` | function URL, no auth | anyone can invoke | anyone can invoke |
+| `iam` | function URL, IAM-signed requests | invoker IAM check | not yet |
+| `private` | behind an internal ALB, reachable only from the network | internal ingress only | not yet |
+| `subnet` | in the VPC | Direct VPC egress, all traffic | VNet integration (the subnet becomes function-only) |
+
+`paibot-iac gen` copies each function folder to `out/<target>/build/<name>/` and adds the start files each cloud needs (`paibot-run.sh` on AWS, `host.json` etc. on Azure). Terraform zips it with `archive_file`.
+
+Notes:
+- **AWS `private`** uses an internal ALB: it needs two subnets of the same kind, and an ALB has an hourly cost.
+- **GCP** uses Cloud Run source deploys (beta), so the `google-beta` provider is added.
+- **Azure** is experimental: the docs do not confirm `node` / `python` are available to custom handlers. Only `public` for now.
+
 ## Sizes and images
 
 ```
@@ -141,7 +173,7 @@ State lives in `out/<target>/` unless you add a backend through `extra`. Do not 
 
 ## Status
 
-0.1 covers networks, NAT, VMs, firewalls and buckets. Every example is checked with `tofu validate` and `terraform validate` on all three clouds (`npm run validate:examples`). Next: load balancers, managed Postgres, DNS, and read-only access from instances to buckets.
+0.2 covers networks, NAT, VMs, firewalls, buckets and functions. Every example is checked with `tofu validate` and `terraform validate` on all three clouds (`npm run validate:examples`). Next: load balancers, managed Postgres, DNS, and read-only access from instances to buckets.
 
 ## License
 

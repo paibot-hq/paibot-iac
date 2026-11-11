@@ -106,3 +106,43 @@ test("two targets on one cloud need distinct names", () => {
   x.targets[1].name = "aws-west";
   assert.deepEqual(problems(x), []);
 });
+
+const fnBase = () => {
+  const x = clone();
+  x.networks[0].subnets.push({ name: "b", cidr: "10.0.2.0/24" });
+  x.functions = [{ name: "api", source: "src", runtime: "node22", command: ["node", "s.js"] }];
+  return x;
+};
+
+test("functions: a minimal one passes", () => {
+  assert.deepEqual(problems(fnBase()), []);
+});
+
+test("functions: field checks", () => {
+  const x = fnBase();
+  Object.assign(x.functions[0], { runtime: "ruby", command: [], memoryMb: 128, timeoutSeconds: 3600, env: { PORT: "1" } });
+  const p = problems(x).join("\n");
+  for (const re of [/runtime must be/, /command must be/, /memoryMb/, /timeoutSeconds/, /`PORT` is set by the platform/]) {
+    assert.match(p, re);
+  }
+});
+
+test("functions: private needs a subnet, and two of them on aws", () => {
+  const x = fnBase();
+  x.functions[0].access = "private";
+  assert.match(problems(x).join(), /needs `subnet`/);
+  x.functions[0].subnet = "n/a";
+  assert.deepEqual(problems(x), []);
+  x.networks[0].subnets.pop();
+  assert.match(problems(x).join(), /needs two private subnets/);
+});
+
+test("functions: azure is public only for now, and its subnet is reserved", () => {
+  const x = fnBase();
+  x.targets.push({ cloud: "azure", region: "eastus" });
+  x.sshKey = "ssh-ed25519 AAAA";
+  x.functions[0].subnet = "n/a";
+  const p = problems(x).join("\n");
+  assert.match(p, /`access: iam` is not supported on azure yet/);
+  assert.match(p, /reserved for functions, but instance vm/);
+});

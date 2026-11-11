@@ -65,6 +65,38 @@ plan・apply・状態の管理は OpenTofu か Terraform に任せます。出�
 
 一部のクラウドでしか成り立たない書き方はエラーにします。たとえば private サブネットにパブリック IP を付ける、置き場所の public サブネットがないのに NAT を使う、などです。`paibot-iac check` は問題をまとめて全部出します。
 
+## 関数（Lambda のようなもの）
+
+`PORT` で待ち受ける**普通の HTTP サーバー**を、そのまま3クラウドのサーバーレスで動かします。Lambda 用・Cloud Run 用に書き分ける必要はありません。
+
+```yaml
+functions:
+  - name: hello
+    source: hello               # このフォルダをそのまま zip にする（node_modules なども入れておく）
+    runtime: node22             # node22 / node24 / python3.12
+    command: [node, server.js]
+    access: public              # public / iam / private（既定は iam）
+    memoryMb: 512               # 512〜4096
+    timeoutSeconds: 30          # 1〜900
+    env: { GREETING: paibot }
+    subnet: main/app            # 付けると外向きの通信がそのサブネットのルールに従う（private では必須）
+```
+
+| | AWS | Google Cloud | Azure（試験的） |
+|---|---|---|---|
+| 載せ先 | Lambda + [Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter) | Cloud Run（zip をランタイムのベースイメージに載せる。ビルドなし） | Functions Flex Consumption の custom handler |
+| `public` | Function URL（認証なし） | 誰でも呼べる | 誰でも呼べる |
+| `iam` | Function URL（IAM 署名が必要） | 呼び出しの IAM 権限が必要 | 未対応 |
+| `private` | 内部 ALB の後ろ。ネットワークの中からだけ | ingress を内部のみ | 未対応 |
+| `subnet` | VPC に置く | Direct VPC egress（全部の通信を VPC へ） | VNet 統合（サブネットは関数専用になる） |
+
+`paibot-iac gen` は、関数のフォルダを `out/<target>/build/<name>/` にコピーし、各クラウドの起動用ファイルを足します。AWS には `paibot-run.sh`、Azure には `host.json` などです。zip にするのは Terraform（`archive_file`）です。
+
+注意:
+- **AWS の `private`** は内部 ALB を使うので、同じ種類（private 同士など）のサブネットが2つ要ります。ALB には時間ごとの料金がかかります。
+- **GCP** は Cloud Run の zip デプロイ（ベータ）を使うので、`google-beta` プロバイダも使います。
+- **Azure** は試験的です。custom handler の実行環境で `node` / `python` が使えるかは、公式のドキュメントで確かめられていません。いまは `public` だけです。
+
 ## サイズとイメージ
 
 ```
@@ -139,7 +171,7 @@ export default defineInfra({
 
 ## いまの状態
 
-0.1 で扱えるのは、ネットワーク・NAT・VM・ファイアウォール・バケットです。例はすべて、3クラウドとも `tofu validate` と `terraform validate` で確かめています（`npm run validate:examples`）。次はロードバランサ、マネージド Postgres、DNS、インスタンスからバケットへの読み取り権限です。
+0.2 で扱えるのは、ネットワーク・NAT・VM・ファイアウォール・バケット・関数です。例はすべて、3クラウドとも `tofu validate` と `terraform validate` で確かめています（`npm run validate:examples`）。次はロードバランサ、マネージド Postgres、DNS、インスタンスからバケットへの読み取り権限です。
 
 ## ライセンス
 

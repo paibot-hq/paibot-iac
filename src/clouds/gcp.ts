@@ -1,7 +1,11 @@
-import { image } from "../catalog.ts";
+import { image, runtime } from "../catalog.ts";
 import { id, lit, ref, TfDoc } from "../tf.ts";
 import {
+  archive,
   bucketId,
+  fnAccess,
+  fnMemory,
+  fnTimeout,
   diskGb,
   flatIngress,
   imageName,
@@ -18,7 +22,8 @@ import { ADMIN_USER } from "../catalog.ts";
 /** Accelerator-optimized families must stop (not live-migrate) for host maintenance. */
 const GPU_FAMILIES = /^(a2|a3|a4|g2|g4)-/;
 
-export function gcp({ infra, target }: Ctx): TfDoc {
+export function gcp(ctx: Ctx): TfDoc {
+  const { infra, target } = ctx;
   const doc = new TfDoc();
   const name = infra.name;
   const zone = target.zone ?? `${target.region}-a`;
@@ -133,5 +138,97 @@ export function gcp({ infra, target }: Ctx): TfDoc {
     doc.output(`${bucketId(b.name)}_bucket`, ref(`${g}.name`));
   }
 
+  functions(doc, ctx, zone);
   return doc;
+}
+
+/**
+ * Plain HTTP servers on Cloud Run, deployed from a source zip onto a Google runtime base image (no build).
+ * public: invoker check off. iam: invoker check on. private: internal ingress only.
+ */
+function functions(doc: TfDoc, { infra, target, packages }: Ctx, zone: string) {
+  const fns = infra.functions ?? [];
+  if (!fns.length) return;
+  const name = infra.name;
+  doc.terraform({
+    required_version: ">= 1.6",
+    required_providers: {
+      google: { source: "hashicorp/google", version: ">= 6.0, < 8.0" },
+      // Cloud Run source deploys (containers.source_code) are only in the beta provider.
+      "google-beta": { source: "hashicorp/google-beta", version: ">= 6.0, < 8.0" },
+      archive: { source: "hashicorp/archive", version: ">= 2.4" },
+    },
+  });
+  doc.provider("google-beta", { project: target.project!, region: target.region, zone, default_labels: TAGS(infra) });
+
+  const src = doc.resource("google_storage_bucket", "fn_src", {
+    name: `${target.project}-${name}-src`,
+    location: target.region.toUpperCase(),
+    uniform_bucket_level_access: true,
+    public_access_prevention: "enforced",
+    force_destroy: true,
+  });
+
+  for (const f of fns) {
+    const fid = id("fn", f.name);
+    packages.push({ dir: `build/${f.name}`, source: f.source, files: [] });
+    const zip = doc.data("archive_file", fid, archive(f));
+    const obj = doc.resource("google_storage_bucket_object", fid, {
+      bucket: ref(`${src}.name`),
+      name: `${f.name}/${ref(`${zip}.output_md5`)}.zip`,
+      source: ref(`${zip}.output_path`),
+    });
+
+    const access = fnAccess(f);
+    let vpc: unknown;
+    if (f.subnet) {
+      const [n, s] = f.subnet.split("/");
+      // All outbound traffic goes into the network, so the subnet's rules (NAT or not) apply.
+      vpc = [
+        {
+          egress: "ALL_TRAFFIC",
+          network_interfaces: [
+            {
+              network: ref(`google_compute_network.${n}.id`),
+              subnetwork: ref(`google_compute_subnetwork.${id(n, s)}.id`),
+            },
+          ],
+        },
+      ];
+    }
+    const [cmd, ...args] = f.command;
+    const svc = doc.resource("google_cloud_run_v2_service", f.name, {
+      provider: "google-beta",
+      name: `${name}-${f.name}`,
+      location: target.region,
+      launch_stage: "BETA",
+      deletion_protection: false,
+      ingress: access === "private" ? "INGRESS_TRAFFIC_INTERNAL_ONLY" : "INGRESS_TRAFFIC_ALL",
+      invoker_iam_disabled: access !== "iam",
+      template: [
+        {
+          timeout: `${fnTimeout(f)}s`,
+          vpc_access: vpc as never,
+          containers: [
+            {
+              image: "scratch",
+              base_image_uri: `${target.region}-docker.pkg.dev/serverless-runtimes/${runtime(f.runtime)!.gcp}`,
+              command: [cmd],
+              args,
+              source_code: [
+                {
+                  cloud_storage_source: [
+                    { bucket: ref(`${src}.name`), object: ref(`${obj}.name`), generation: ref(`${obj}.generation`) },
+                  ],
+                },
+              ],
+              resources: [{ limits: { cpu: "1", memory: `${fnMemory(f)}Mi` } }],
+              env: Object.entries(f.env ?? {}).map(([k, v]) => ({ name: k, value: lit(v) })),
+            },
+          ],
+        },
+      ],
+    });
+    doc.output(`${f.name}_url`, ref(`${svc}.uri`));
+  }
 }
