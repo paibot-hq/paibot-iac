@@ -1,0 +1,60 @@
+{
+  "name": "@paibot/iac",
+  "version": "0.1.0",
+  "description": "Write infrastructure once — networks, NAT, VMs, firewalls, buckets — and generate Terraform / OpenTofu for AWS, Google Cloud and Azure with the same meaning on each.",
+  "type": "module",
+  "license": "MIT",
+  "author": "sanofc",
+  "keywords": [
+    "iac",
+    "infrastructure-as-code",
+    "terraform",
+    "opentofu",
+    "multi-cloud",
+    "aws",
+    "gcp",
+    "azure"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "paibot-iac": "bin/paibot-iac.js"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test 'test/*.test.ts'",
+    "validate:examples": "sh scripts/validate-examples.sh",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "^5.9.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paibot-hq/paibot-iac.git"
+  },
+  "homepage": "https://github.com/paibot-hq/paibot-iac#readme",
+  "bugs": {
+    "url": "https://github.com/paibot-hq/paibot-iac/issues"
+  }
+}

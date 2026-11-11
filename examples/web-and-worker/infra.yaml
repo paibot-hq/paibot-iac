@@ -1,0 +1,36 @@
+# A public web server and a private worker that can only reach the internet through NAT.
+# The same file becomes AWS, Google Cloud and Azure.
+name: demo
+sshKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPY1joKA/RkxSPtgiFiz2GrPhChFLloacPEEZLM9jM+m paibot-iac-example"
+
+targets:
+  - { cloud: aws, region: ap-northeast-1 }
+  - { cloud: gcp, region: asia-northeast1, project: my-project }
+  - { cloud: azure, region: japaneast }
+
+networks:
+  - name: main
+    cidr: 10.20.0.0/16
+    nat: true
+    subnets:
+      - { name: edge, cidr: 10.20.0.0/24, public: true }
+      - { name: app, cidr: 10.20.1.0/24 }
+
+instances:
+  - name: web
+    size: small
+    subnet: main/edge
+    publicIp: true
+    ingress:
+      - { ports: [80, 443], from: [0.0.0.0/0] }
+    userDataFile: web.sh
+
+  - name: worker
+    size: medium
+    subnet: main/app
+    diskGb: 50
+    ingress:
+      - { ports: [8080], from: [10.20.0.0/24] }   # only from the edge subnet
+
+buckets:
+  - { name: demo-artifacts-20261112, versioning: true }

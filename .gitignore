@@ -1,0 +1,7 @@
+node_modules/
+dist/
+out/
+.terraform/
+*.tfstate
+*.tfstate.*
+.validate/
